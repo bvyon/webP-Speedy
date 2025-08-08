@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import Image from 'next/image';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
-import { Upload, Download, FileArchive, Loader2, FileImage, AlertCircle } from 'lucide-react';
+import { Upload, Download, FileArchive, Loader2, FileImage, AlertCircle, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -21,6 +21,7 @@ interface ImageFile {
   convertedPreviewUrl?: string;
   isConverting: boolean;
   error?: string;
+  isLarger?: boolean;
 }
 
 const formatBytes = (bytes: number, decimals = 2): string => {
@@ -71,12 +72,21 @@ export function ImageConverter() {
       setImages(prev => [...prev, newImage]);
       convertFileToWebP(file)
         .then(convertedBlob => {
+          const isLarger = convertedBlob.size > file.size;
+          if (isLarger) {
+            toast({
+                variant: 'default',
+                title: "Conversion not optimal",
+                description: `${file.name} is larger after conversion. Original will be used.`
+            });
+          }
           setImages(prev => prev.map(img => img.id === id ? {
             ...img,
             isConverting: false,
             convertedBlob,
             convertedSize: convertedBlob.size,
-            convertedPreviewUrl: URL.createObjectURL(convertedBlob)
+            convertedPreviewUrl: URL.createObjectURL(convertedBlob),
+            isLarger: isLarger,
           } : img));
         })
         .catch(error => {
@@ -132,7 +142,7 @@ export function ImageConverter() {
   }, [handleFileSelect]);
 
   const handleDownloadAll = async () => {
-    const convertedImages = images.filter(img => img.convertedBlob);
+    const convertedImages = images.filter(img => img.convertedBlob || img.isLarger);
     if (convertedImages.length === 0) {
         toast({ variant: "destructive", title: "No images to download", description: "Please convert some images first."});
         return;
@@ -143,7 +153,11 @@ export function ImageConverter() {
         const zip = new JSZip();
         convertedImages.forEach(img => {
             const originalFilename = img.originalFile.name.substring(0, img.originalFile.name.lastIndexOf('.'));
-            zip.file(`${originalFilename}.webp`, img.convertedBlob!);
+            if(img.isLarger) {
+                zip.file(img.originalFile.name, img.originalFile);
+            } else {
+                zip.file(`${originalFilename}.webp`, img.convertedBlob!);
+            }
         });
         const zipBlob = await zip.generateAsync({ type: 'blob' });
         saveAs(zipBlob, 'WebP_Speedy_Images.zip');
@@ -152,6 +166,15 @@ export function ImageConverter() {
         toast({ variant: "destructive", title: "Error creating ZIP", description: "Could not create the ZIP file."});
     } finally {
         setIsZipping(false);
+    }
+  };
+
+  const handleDownloadSingle = (image: ImageFile) => {
+    if (image.isLarger) {
+        saveAs(image.originalFile, image.originalFile.name);
+    } else if (image.convertedBlob) {
+        const originalFilename = image.originalFile.name.substring(0, image.originalFile.name.lastIndexOf('.'));
+        saveAs(image.convertedBlob, `${originalFilename}.webp`);
     }
   };
 
@@ -204,7 +227,7 @@ export function ImageConverter() {
                 <h2 className="text-2xl font-bold text-foreground">Conversion Results</h2>
                 <Button onClick={handleDownloadAll} disabled={isZipping || images.some(i => i.isConverting)}>
                     {isZipping ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileArchive className="mr-2 h-4 w-4" />}
-                    Download All (.zip)
+                    Download All
                 </Button>
             </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -220,28 +243,46 @@ export function ImageConverter() {
                     <p className="text-xs font-medium text-foreground">{formatBytes(image.originalSize)}</p>
                   </div>
                   <div className="space-y-2">
-                    <h3 className="text-sm font-semibold text-foreground">WebP</h3>
+                    <h3 className="text-sm font-semibold text-foreground">{image.isLarger ? 'Original (Optimal)' : 'WebP'}</h3>
                     <div className="aspect-video bg-muted rounded-md flex items-center justify-center">
                       {image.isConverting && <Loader2 className="w-8 h-8 text-primary animate-spin" />}
                       {image.error && <AlertCircle className="w-8 h-8 text-destructive" />}
-                      {image.convertedPreviewUrl && <Image src={image.convertedPreviewUrl} alt="Converted" width={160} height={90} className="max-h-full max-w-full object-contain rounded-md" />}
+                      {image.isLarger && <Image src={image.originalPreviewUrl} alt="Original because it is smaller" width={160} height={90} className="max-h-full max-w-full object-contain rounded-md" />}
+                      {image.convertedPreviewUrl && !image.isLarger && <Image src={image.convertedPreviewUrl} alt="Converted" width={160} height={90} className="max-h-full max-w-full object-contain rounded-md" />}
                     </div>
                     {image.error ? (
                         <p className="text-xs text-destructive">{image.error}</p>
                     ) : image.convertedSize !== undefined ? (
                         <>
-                            <p className="text-xs text-muted-foreground">
-                                {formatBytes(image.convertedSize)}
-                                {image.convertedSize < image.originalSize && (
-                                    <span className="ml-2 text-green-400 font-bold">
-                                        (-{(((image.originalSize - image.convertedSize) / image.originalSize) * 100).toFixed(0)}%)
-                                    </span>
-                                )}
-                            </p>
-                            <Button size="sm" className="w-full" onClick={() => saveAs(image.convertedBlob!, `${image.originalFile.name.substring(0, image.originalFile.name.lastIndexOf('.'))}.webp`)}>
-                                <Download className="mr-2 h-4 w-4" />
-                                Download
-                            </Button>
+                           {image.isLarger ? (
+                                <>
+                                    <p className="text-xs text-muted-foreground">
+                                        {formatBytes(image.originalSize)}
+                                        <span className="ml-2 text-blue-400 font-bold">
+                                            (Optimal)
+                                        </span>
+                                    </p>
+                                    <Button size="sm" className="w-full" onClick={() => handleDownloadSingle(image)}>
+                                      <RefreshCw className="mr-2 h-4 w-4" />
+                                      Download Original
+                                    </Button>
+                                </>
+                            ) : (
+                                <>
+                                    <p className="text-xs text-muted-foreground">
+                                        {formatBytes(image.convertedSize)}
+                                        {image.convertedSize < image.originalSize && (
+                                            <span className="ml-2 text-green-400 font-bold">
+                                                (-{(((image.originalSize - image.convertedSize) / image.originalSize) * 100).toFixed(0)}%)
+                                            </span>
+                                        )}
+                                    </p>
+                                    <Button size="sm" className="w-full" onClick={() => handleDownloadSingle(image)}>
+                                        <Download className="mr-2 h-4 w-4" />
+                                        Download
+                                    </Button>
+                                </>
+                            )}
                         </>
                     ) : (
                         <p className="text-xs text-muted-foreground">Converting...</p>
