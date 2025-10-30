@@ -4,6 +4,7 @@ const nextConfig: NextConfig = {
   /* config options here */
   output: 'export',
   basePath: '/webP-Speedy',
+  assetPrefix: '/webP-Speedy/',
   typescript: {
     ignoreBuildErrors: true,
   },
